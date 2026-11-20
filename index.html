@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Workout Tracker</title>
+  <meta name="description" content="Track your workouts, sports and activities.">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f5f8" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Workouts">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app"></main>
+
+  <div id="timer" class="timer hidden" role="timer" aria-live="polite">
+    <span>Rest</span>
+    <strong id="timer-text">0:00</strong>
+    <button data-action="timer-add">+30s</button>
+    <button data-action="timer-skip">Skip</button>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-action="modal-close"></div>
+    <div class="modal-sheet">
+      <button class="icon-btn small modal-x" data-action="modal-close" aria-label="Close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <nav class="tabbar">
+    <button data-action="nav" data-tab="today"><span class="ic">📅</span>Log</button>
+    <button data-action="nav" data-tab="history"><span class="ic">🗓️</span>History</button>
+    <button data-action="nav" data-tab="progress"><span class="ic">📈</span>Progress</button>
+    <button data-action="nav" data-tab="more"><span class="ic">⚙️</span>Settings</button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>
