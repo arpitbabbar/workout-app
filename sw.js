@@ -1,6 +1,6 @@
 // Lets the app open without internet. Always tries the network first so updates show up.
-const CACHE = 'workout-tracker-v1';
-const FILES = ['./', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
+const CACHE = 'workout-tracker-v2';
+const FILES = ['./', './index.html', './styles.css', './app.js', './manifest.json', './exercise-data.js', './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

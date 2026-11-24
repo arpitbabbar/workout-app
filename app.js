@@ -509,10 +509,13 @@ function renderExercise(ex, ei, date) {
   const canFill = sug && ex.sets.some(s => !s.done && s.type !== 'warmup' && (s.kg == null || s.reps == null));
   return `<div class="exercise">
     <div class="ex-head">
-      <div>
-        <div class="ex-name">${esc(info.name)}</div>
-        <div class="muted small">${last ? `Last time (${shortDate(last.date)}): ${last.sets.map(fmtSet).join(', ')}` : 'First time logging this one'}</div>
-        ${info.note ? `<div class="ex-note">📝 ${esc(info.note)}</div>` : ''}
+      <div class="ex-main">
+        <button class="thumb-btn" data-action="exercise-info" data-id="${esc(ex.exId)}" aria-label="How to do ${esc(info.name)}">${exThumb(info)}</button>
+        <div>
+          <button class="ex-name" data-action="exercise-info" data-id="${esc(ex.exId)}">${esc(info.name)} <span class="info-i">ⓘ</span></button>
+          <div class="muted small">${last ? `Last time (${shortDate(last.date)}): ${last.sets.map(fmtSet).join(', ')}` : 'First time logging this one'}</div>
+          ${info.note ? `<div class="ex-note">📝 ${esc(info.note)}</div>` : ''}
+        </div>
       </div>
       <div class="ex-tools">
         <button class="icon-btn small" data-action="exercise-settings" data-id="${esc(ex.exId)}" aria-label="Exercise settings">⚙️</button>
@@ -815,6 +818,10 @@ function renderSettings() {
       <h2>ℹ️ How estimates work</h2>
       <p class="muted small"><strong>Steps:</strong> websites can't read your phone's step counter, so type the day's total from your phone's Health / Fit app. If you leave it blank, steps are estimated from walks (~1,300/km), runs (~1,000/km) and hikes (~1,400/km).</p>
       <p class="muted small"><strong>Calories:</strong> estimated from the activity, its intensity, its duration and your body weight (standard MET formula). Treat them as a rough guide.</p>
+      <p class="muted small"><strong>Credits:</strong> exercise photos and instructions from
+        <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">free-exercise-db</a> (public domain).
+        Muscle diagrams from <a href="https://github.com/giavinh79/react-body-highlighter" target="_blank" rel="noopener">react-body-highlighter</a>
+        (MIT License, © 2020 GV79).</p>
       <p class="muted small"><strong>Weight training:</strong> counted from your workout time (the timer, or the duration you type), at about ${kcalFor(STRENGTH_MET, 1)} kcal per minute for your body weight. If no time was logged, it assumes about ${MIN_PER_SET} minutes per set including rest.</p>
     </section>
 
@@ -853,8 +860,67 @@ function recentExerciseIds(limit) {
   return ids.slice(0, limit);
 }
 
-const pickItem = (e, sub) => `<button class="pick-item" data-action="pick-exercise" data-id="${esc(e.id)}" data-name="${esc(e.name.toLowerCase())}">
-  <span>${esc(e.name)}</span><span class="muted small">${esc(sub)}</span></button>`;
+/* ---------- Exercise info: photos, muscles, how-to (data in exercise-data.js) ---------- */
+
+const exInfo = id => (typeof EXERCISE_INFO !== 'undefined' && EXERCISE_INFO[id]) || null;
+const exImg = (id, n) => `img/ex/${id}-${n}.jpg`;
+const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+
+// Database muscle names -> body map areas
+const MUSCLE_TO_MAP = {
+  abdominals: ['abs', 'obliques'], abductors: ['abductors'], adductors: ['adductor'], biceps: ['biceps'],
+  calves: ['calves'], chest: ['chest'], forearms: ['forearm'], glutes: ['gluteal'], hamstrings: ['hamstring'],
+  lats: ['upper-back'], 'lower back': ['lower-back'], 'middle back': ['upper-back'], neck: ['neck'],
+  quadriceps: ['quadriceps'], shoulders: ['front-deltoids', 'back-deltoids'], traps: ['trapezius'], triceps: ['triceps'],
+};
+// Custom exercises only have a muscle group
+const GROUP_TO_MUSCLES = {
+  Chest: ['chest'], Back: ['lats', 'middle back'], Shoulders: ['shoulders'], Legs: ['quadriceps', 'hamstrings', 'glutes'],
+  Biceps: ['biceps'], Triceps: ['triceps'], Core: ['abdominals'], 'Full body': ['quadriceps', 'chest', 'shoulders', 'abdominals'],
+};
+
+function exMuscles(e) {
+  const i = exInfo(e.id);
+  return i ? { primary: i.primary, secondary: i.secondary } : { primary: GROUP_TO_MUSCLES[e.muscle] || [], secondary: [] };
+}
+
+function bodyMapSvg(primary, secondary) {
+  if (typeof BODY_MAP === 'undefined') return '';
+  const p = new Set(primary.flatMap(m => MUSCLE_TO_MAP[m] || []));
+  const s = new Set(secondary.flatMap(m => MUSCLE_TO_MAP[m] || []));
+  const view = side => `<figure><svg class="body-map" viewBox="0 0 1000 2200" role="img" aria-label="Muscles, ${side} view">
+    ${BODY_MAP[side].map(([m, pts]) => `<polygon points="${pts}"${p.has(m) ? ' class="p"' : s.has(m) ? ' class="s"' : ''}/>`).join('')}
+    </svg><figcaption>${cap(side)}</figcaption></figure>`;
+  return `<div class="body-maps">${view('front')}${view('back')}</div>`;
+}
+
+const exThumb = e => exInfo(e.id)?.img
+  ? `<img class="thumb" src="${exImg(e.id, 0)}" alt="" loading="lazy">`
+  : `<span class="thumb thumb-empty">${MUSCLE_ICONS[e.muscle] || '🏋️'}</span>`;
+
+function openExerciseInfo(id, fromPicker) {
+  const e = exById(id), i = exInfo(id), m = exMuscles(e);
+  openModal(`
+    <div class="sheet-head">
+      ${fromPicker ? `<button class="icon-btn" data-action="pick-muscle" data-muscle="${esc(e.muscle)}" aria-label="Back">‹</button>` : ''}
+      <h2>${esc(e.name)}</h2>
+    </div>
+    ${i && i.img ? `<div class="ex-anim"><img src="${exImg(id, 0)}" alt="${esc(e.name)}: start position">
+        <img class="frame2" src="${exImg(id, 1)}" alt="${esc(e.name)}: end position"></div>`
+      : `<p class="muted small">${e.custom ? 'Custom exercises don’t have photos.' : 'No photos for this exercise yet.'}</p>`}
+    <h3>Muscles worked</h3>
+    <div class="chips">${m.primary.map(x => `<span class="chip muscle-p">${esc(cap(x))}</span>`).join('')}${
+      m.secondary.map(x => `<span class="chip muscle-s">${esc(cap(x))}</span>`).join('')}</div>
+    ${bodyMapSvg(m.primary, m.secondary)}
+    <div class="legend"><span><i class="dot dot-w"></i>Main muscles</span>${m.secondary.length ? '<span><i class="dot dot-s"></i>Also worked</span>' : ''}</div>
+    ${i && i.steps ? `<h3>How to do it</h3><ol class="steps">${i.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
+    ${i && i.equipment ? `<p class="muted small">Equipment: ${esc(cap(i.equipment))} · Level: ${esc(cap(i.level))}</p>` : ''}
+    ${fromPicker ? `<div class="btn-row"><button class="btn primary" data-action="pick-exercise" data-id="${esc(id)}">+ Add to workout</button></div>` : ''}`);
+}
+
+const pickItem = (e, sub) => `<div class="pick-item" role="button" tabindex="0" data-action="pick-exercise" data-id="${esc(e.id)}" data-name="${esc(e.name.toLowerCase())}">
+  ${exThumb(e)}<span class="pick-text"><span>${esc(e.name)}</span><span class="muted small">${esc(sub)}</span></span>
+  <button class="icon-btn small info-btn" data-action="exercise-info" data-id="${esc(e.id)}" data-picker="1" aria-label="How to do ${esc(e.name)}">ⓘ</button></div>`;
 
 // Step 1: search, recent shortcuts, and muscle group cards
 function openExercisePicker() {
@@ -1520,6 +1586,7 @@ const actions = {
     }
   },
   'exercise-settings'({ id }) { openExerciseSettings(id); },
+  'exercise-info'({ id, picker }) { openExerciseInfo(id, !!picker); },
   'open-plates'({ ei }) { openPlateCalc(ei); },
   'plate-bar'({ bar }) {
     const ex = state.exercises.find(e => e.id === plateExId);
