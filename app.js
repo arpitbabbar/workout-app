@@ -261,10 +261,26 @@ function workoutVolume(w) {
   return { volume, sets };
 }
 
+// Calories = MET × body weight (kg) × hours
+const kcalFor = (met, minutes) => Math.round(met * state.settings.bodyWeight * minutes / 60);
+
 function activityCalories(a) {
   const i = INTENSITIES.indexOf(a.intensity);
-  return Math.round(activityType(a).met[i < 0 ? 1 : i] * state.settings.bodyWeight * (a.duration || 0) / 60);
+  return kcalFor(activityType(a).met[i < 0 ? 1 : i], a.duration || 0);
 }
+
+const MAX_CLOCK_MS = 6 * 3600 * 1000;
+const MIN_PER_SET = 3; // rough time per set incl. rest, when no duration was logged
+const isLive = (w, date) => !w.finishedAt && w.startedAt && date === todayStr() && Date.now() - w.startedAt < MAX_CLOCK_MS;
+
+// How long a workout took: logged duration, the live clock, or an estimate from the number of sets
+function workoutMinutes(w, date) {
+  if (w.duration) return { min: w.duration, est: false };
+  if (isLive(w, date)) return { min: (Date.now() - w.startedAt) / 60000, est: false, live: true };
+  return { min: workoutVolume(w).sets * MIN_PER_SET, est: true };
+}
+
+const workoutCalories = (w, date) => kcalFor(STRENGTH_MET, workoutMinutes(w, date).min);
 
 function activitySteps(a) {
   if (a.steps > 0) return { steps: a.steps, est: false };
@@ -279,9 +295,10 @@ function dayStats(date) {
   if (!d) return r;
   if (d.workout) {
     Object.assign(r, workoutVolume(d.workout));
-    if (d.workout.duration) {
-      r.minutes += d.workout.duration;
-      r.calories += Math.round(STRENGTH_MET * state.settings.bodyWeight * d.workout.duration / 60);
+    if (r.sets || d.workout.duration) {
+      const m = workoutMinutes(d.workout, date).min;
+      r.minutes += Math.round(m);
+      r.calories += kcalFor(STRENGTH_MET, m);
     }
   }
   let est = false;
@@ -455,18 +472,19 @@ function renderWorkout(date, day) {
   </section>`;
 }
 
-const MAX_CLOCK_MS = 6 * 3600 * 1000;
-
 function renderWorkoutStatus(w, date) {
+  const m = workoutMinutes(w, date);
+  const kcal = workoutCalories(w, date);
+  const fire = m.min ? ` · 🔥 <span${m.live ? ' id="workout-kcal"' : ''}>~${kcal}</span> kcal${m.est ? ` <span class="muted small">(est. from ${workoutVolume(w).sets} sets)</span>` : ''}` : '';
   if (w.finishedAt) {
-    return `<div class="workout-status">✅ Finished${w.duration ? ` · ${w.duration} min` : ''} ·
+    return `<div class="workout-status">✅ Finished${w.duration ? ` · ${w.duration} min` : ''}${fire} ·
       <a href="#" data-action="resume-workout">resume</a></div>`;
   }
   // Live clock only for a workout started today (and not left running for hours)
-  if (w.startedAt && date === todayStr() && Date.now() - w.startedAt < MAX_CLOCK_MS) {
-    return `<div class="workout-status">⏱ <span id="workout-clock" data-start="${w.startedAt}">${fmtElapsed(Date.now() - w.startedAt)}</span></div>`;
+  if (isLive(w, date)) {
+    return `<div class="workout-status">⏱ <span id="workout-clock" data-start="${w.startedAt}">${fmtElapsed(Date.now() - w.startedAt)}</span>${fire}</div>`;
   }
-  return '';
+  return fire ? `<div class="workout-status">${fire.slice(3)}</div>` : '';
 }
 
 function renderExercise(ex, ei, date) {
@@ -615,7 +633,7 @@ function renderRecentDay(date) {
   const d = getDay(date), w = d.workout;
   const lines = [];
   if (w && w.exercises.length) {
-    lines.push(`<div>💪 <strong>${esc(w.name || 'Workout')}</strong> · ${fmtNum(workoutVolume(w).volume)} kg</div>
+    lines.push(`<div>💪 <strong>${esc(w.name || 'Workout')}</strong> · ${fmtNum(workoutVolume(w).volume)} kg · ~${workoutCalories(w, date)} kcal</div>
       <div class="muted small">${esc(w.exercises.map(e => exById(e.exId).name).join(', '))}</div>`);
   }
   for (const a of d.activities) lines.push(`<div>${activityType(a).icon} ${esc(activityName(a))} · ${a.duration || 0} min</div>`);
@@ -797,6 +815,7 @@ function renderSettings() {
       <h2>ℹ️ How estimates work</h2>
       <p class="muted small"><strong>Steps:</strong> websites can't read your phone's step counter, so type the day's total from your phone's Health / Fit app. If you leave it blank, steps are estimated from walks (~1,300/km), runs (~1,000/km) and hikes (~1,400/km).</p>
       <p class="muted small"><strong>Calories:</strong> estimated from the activity, its intensity, its duration and your body weight (standard MET formula). Treat them as a rough guide.</p>
+      <p class="muted small"><strong>Weight training:</strong> counted from your workout time (the timer, or the duration you type), at about ${kcalFor(STRENGTH_MET, 1)} kcal per minute for your body weight. If no time was logged, it assumes about ${MIN_PER_SET} minutes per set including rest.</p>
     </section>
 
     <section class="card">
@@ -1060,7 +1079,7 @@ function workoutSummary(date) {
     if (pr) prs++;
     exercises.push({ name: exById(ex.exId).name, sets: sets.length, best, pr });
   }
-  return { name: w.name || 'Workout', date, duration: w.duration, ...workoutVolume(w), prs, exercises };
+  return { name: w.name || 'Workout', date, duration: w.duration, kcal: workoutCalories(w, date), ...workoutVolume(w), prs, exercises };
 }
 
 function drawSummaryCard(s) {
@@ -1092,7 +1111,7 @@ function drawSummaryCard(s) {
   const stats = [
     [s.duration ? `${s.duration}` : '—', 'minutes'],
     [fmtNum(s.volume), 'kg lifted'],
-    [`${s.sets}`, 'sets'],
+    [`${fmtNum(s.kcal)}`, 'kcal 🔥'],
     [`${s.prs}`, s.prs === 1 ? 'record 🏆' : 'records 🏆'],
   ];
   const gap = 20, bw = (W - 2 * P - gap * 3) / 4;
@@ -1476,7 +1495,11 @@ render();
 // Tick the live workout clock
 setInterval(() => {
   const el = document.getElementById('workout-clock');
-  if (el) el.textContent = fmtElapsed(Date.now() - Number(el.dataset.start));
+  if (!el) return;
+  const ms = Date.now() - Number(el.dataset.start);
+  el.textContent = fmtElapsed(ms);
+  const kcal = document.getElementById('workout-kcal');
+  if (kcal) kcal.textContent = `~${kcalFor(STRENGTH_MET, ms / 60000)}`;
 }, 1000);
 
 // Ask the browser not to clear our data when storage is low
