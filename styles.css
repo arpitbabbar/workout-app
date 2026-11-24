@@ -135,6 +135,21 @@ a { color: var(--accent); }
 }
 .ex-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
 .ex-name { font-weight: 700; }
+.ex-tools { display: flex; gap: 2px; flex-shrink: 0; }
+.ex-foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.suggest {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--surface); border-left: 3px solid var(--blue);
+  border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 0.88rem;
+}
+.suggest.up { border-left-color: var(--green); }
+.suggest .btn { flex-shrink: 0; }
+
+.barbell { display: flex; align-items: center; gap: 2px; height: 110px; padding: 0 4px; }
+.sleeve { width: 48px; height: 14px; background: var(--muted); border-radius: 3px; margin-right: 2px; }
+.plate { width: 16px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.25); }
+.plate-text { margin: 6px 0 0; }
+
 .set-row {
   display: grid; grid-template-columns: 30px 1fr 1fr 46px 30px;
   gap: 6px; align-items: center; margin-bottom: 6px;
@@ -252,6 +267,7 @@ a { color: var(--accent); }
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
   padding: 8px 14px; border-radius: 999px; font: inherit; font-size: 0.88rem; cursor: pointer;
 }
+.chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
 /* ---------- Floating bits ---------- */
 .tabbar {

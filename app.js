@@ -61,6 +61,14 @@ const ACTIVITY_TYPES = {
 const INTENSITIES = ['Easy', 'Moderate', 'Hard'];
 const STRENGTH_MET = 5.0;
 
+// Plates available in a normal gym, with standard colours
+const PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
+const PLATE_STYLE = {
+  25: ['#e5383b', 100], 20: ['#2f6fed', 94], 15: ['#f2c014', 82], 10: ['#2fb344', 70],
+  5: ['#f1f3f7', 54], 2.5: ['#3a3f4b', 44], 1.25: ['#9aa1ad', 36],
+};
+const BARS = [20, 15, 10, 0];
+
 /* ---------------------------- Helpers ---------------------------- */
 
 const pad = n => String(n).padStart(2, '0');
@@ -184,6 +192,48 @@ function prSetIndex(ex, date) {
   let idx = -1, max = prev;
   ex.sets.forEach((s, i) => { if (s.reps > 0 && (s.kg || 0) > max) { max = s.kg; idx = i; } });
   return idx;
+}
+
+// Per-exercise settings used by suggestions and the plate calculator
+const exPrefs = e => ({ repMin: e.repMin ?? 8, repMax: e.repMax ?? 12, step: e.step ?? 2.5, bar: e.bar ?? 20 });
+
+// "Double progression": hit the top of the rep range on every set -> add weight, otherwise add a rep
+function suggestion(exId, date) {
+  const last = lastSession(exId, date);
+  if (!last) return null;
+  const p = exPrefs(exById(exId));
+  const top = Math.max(...last.sets.map(s => s.kg || 0));
+  const plusOne = last.sets.map(s => Math.min(p.repMax, s.reps + 1));
+  if (!top) return { kg: null, reps: last.sets.map(s => s.reps + 1), text: 'Aim for one more rep on each set than last time' };
+  if (last.sets.filter(s => (s.kg || 0) === top).every(s => s.reps >= p.repMax)) {
+    const kg = top + p.step;
+    return { kg, reps: last.sets.map(() => p.repMin), up: true, text: `You hit ${p.repMax} reps on every set. Go up to ${fmtKg(kg)} kg × ${p.repMin}` };
+  }
+  return { kg: top, reps: plusOne, text: `Stay at ${fmtKg(top)} kg and beat last time by one rep` };
+}
+
+// The grey hint shown in an empty box (and used when you tick ✓ without typing)
+function setHint(sug, si) {
+  if (!sug) return null;
+  return { kg: sug.kg, reps: sug.reps[Math.min(si, sug.reps.length - 1)] };
+}
+
+function platesPerSide(total, bar) {
+  let side = (total - bar) / 2;
+  if (side < 0) return null;
+  const plates = [];
+  for (const p of PLATES) while (side >= p - 1e-9) { plates.push(p); side -= p; }
+  return { plates, leftover: Math.round(side * 200) / 100 };
+}
+
+function warmupSets(work, bar) {
+  const list = bar > 0 && work > bar ? [{ kg: bar, reps: 10 }] : [];
+  for (const [pct, reps] of [[0.4, 8], [0.6, 5], [0.8, 3]]) {
+    const kg = Math.round(work * pct / 2.5) * 2.5;
+    const prev = list.length ? list[list.length - 1].kg : 0;
+    if (kg > prev && kg > bar && kg < work) list.push({ kg, reps });
+  }
+  return list;
 }
 
 function makeSets(exId, date) {
@@ -389,30 +439,45 @@ function renderWorkout(date, day) {
 
 function renderExercise(ex, ei, date) {
   const info = exById(ex.exId);
+  const prefs = exPrefs(info);
   const last = lastSession(ex.exId, date);
+  const sug = suggestion(ex.exId, date);
   const pr = prSetIndex(ex, date);
   const rows = ex.sets.map((s, si) => {
-    const hint = last && last.sets[si];
+    const hint = setHint(sug, si);
     const at = `data-ei="${ei}" data-si="${si}"`;
     return `<div class="set-row${s.done ? ' done' : ''}">
       <span class="set-no">${si === pr ? '🏆' : si + 1}</span>
-      <input type="number" inputmode="decimal" step="any" min="0" data-field="set-kg" ${at} value="${s.kg ?? ''}" placeholder="${hint ? fmtKg(hint.kg) : 'kg'}" aria-label="Weight in kg">
+      <input type="number" inputmode="decimal" step="any" min="0" data-field="set-kg" ${at} value="${s.kg ?? ''}" placeholder="${hint && hint.kg ? fmtKg(hint.kg) : 'kg'}" aria-label="Weight in kg">
       <input type="number" inputmode="numeric" step="1" min="0" data-field="set-reps" ${at} value="${s.reps ?? ''}" placeholder="${hint ? hint.reps : 'reps'}" aria-label="Reps">
       <button class="check" data-action="toggle-done" ${at} aria-label="Mark set done">✓</button>
       <button class="icon-btn small" data-action="remove-set" ${at} aria-label="Remove set">✕</button>
     </div>`;
   }).join('');
+  const canFill = sug && ex.sets.some(s => !s.done && (s.kg == null || s.reps == null));
   return `<div class="exercise">
     <div class="ex-head">
       <div>
         <div class="ex-name">${esc(info.name)}</div>
         <div class="muted small">${last ? `Last time (${shortDate(last.date)}): ${last.sets.map(fmtSet).join(', ')}` : 'First time logging this one'}</div>
       </div>
-      <button class="icon-btn small" data-action="remove-exercise" data-ei="${ei}" aria-label="Remove exercise">🗑</button>
+      <div class="ex-tools">
+        <button class="icon-btn small" data-action="exercise-settings" data-id="${esc(ex.exId)}" aria-label="Exercise settings">⚙️</button>
+        <button class="icon-btn small" data-action="remove-exercise" data-ei="${ei}" aria-label="Remove exercise">🗑</button>
+      </div>
     </div>
+    ${sug ? `<div class="suggest${sug.up ? ' up' : ''}">
+      <div><strong>${sug.up ? '⬆️' : '💡'} ${esc(sug.text)}</strong>
+        <div class="muted small">Target ${prefs.repMin}–${prefs.repMax} reps ·
+          <a href="#" data-action="exercise-settings" data-id="${esc(ex.exId)}">change</a></div></div>
+      ${canFill ? `<button class="btn small" data-action="use-suggestion" data-ei="${ei}">Fill</button>` : ''}
+    </div>` : ''}
     <div class="set-row set-head"><span>Set</span><span>kg</span><span>Reps</span><span>Done</span><span></span></div>
     ${rows}
-    <button class="btn ghost small" data-action="add-set" data-ei="${ei}">+ Add set</button>
+    <div class="ex-foot">
+      <button class="btn ghost small" data-action="add-set" data-ei="${ei}">+ Add set</button>
+      <button class="btn ghost small" data-action="open-plates" data-ei="${ei}">🧮 Plates & warm-up</button>
+    </div>
   </div>`;
 }
 
@@ -877,6 +942,70 @@ function newWorkout(name, exIds) {
   save();
 }
 
+function openExerciseSettings(exId) {
+  const p = exPrefs(exById(exId));
+  openModal(`<h2>⚙️ ${esc(exById(exId).name)}</h2>
+    <p class="muted small">Used for suggestions: once you reach the top of the rep range on every set, the app tells you to add weight.</p>
+    <form id="ex-settings-form" data-id="${esc(exId)}" class="grid-2">
+      ${formField({ key: 'repMin', label: 'Reps from', type: 'number', required: true }, p.repMin)}
+      ${formField({ key: 'repMax', label: 'Reps up to', type: 'number', required: true }, p.repMax)}
+      ${formField({ key: 'step', label: 'Add weight in steps of (kg)', type: 'number', required: true, wide: true }, p.step)}
+      <div class="btn-row wide"><button class="btn primary" type="submit">Save</button></div>
+    </form>`);
+}
+
+function saveExerciseSettings(form) {
+  const fd = new FormData(form);
+  const repMin = Math.round(num(fd.get('repMin'))), repMax = Math.round(num(fd.get('repMax'))), step = num(fd.get('step'));
+  if (!(repMin > 0 && repMax >= repMin && step > 0)) { toast('Check the numbers: “from” must be ≤ “up to”'); return; }
+  const ex = state.exercises.find(e => e.id === form.dataset.id);
+  if (ex) Object.assign(ex, { repMin, repMax, step });
+  save(); closeModal(); render();
+}
+
+let plateExId = null;
+
+function openPlateCalc(ei) {
+  const ex = currentWorkout().exercises[ei];
+  const sug = suggestion(ex.exId, ui.date);
+  const weight = Math.max(0, ...ex.sets.map(s => s.kg || 0)) || (sug && sug.kg) || '';
+  plateExId = ex.exId;
+  openModal(`<h2>🧮 ${esc(exById(ex.exId).name)}</h2>
+    <label class="field"><span>Working weight (kg)</span>
+      <input type="number" inputmode="decimal" step="any" min="0" data-field="plate-weight" value="${weight}" placeholder="e.g. 80"></label>
+    <div class="field"><span>Bar</span><div class="chips" id="bar-chips">${renderBarChips()}</div></div>
+    <div id="plate-result">${renderPlateResult(num(weight))}</div>`);
+}
+
+function renderBarChips() {
+  const bar = exPrefs(exById(plateExId)).bar;
+  return BARS.map(b => `<button class="chip${b === bar ? ' active' : ''}" data-action="plate-bar" data-bar="${b}">${b ? `${b} kg bar` : 'No bar'}</button>`).join('');
+}
+
+const plateText = (kg, bar) => {
+  const r = platesPerSide(kg, bar);
+  if (!r || !r.plates.length) return bar ? 'empty bar' : '';
+  return `${r.plates.map(fmtKg).join(' + ')} per side`;
+};
+
+function renderPlateResult(weight) {
+  if (!(weight > 0)) return `<p class="muted">Enter a weight to see which plates to load.</p>`;
+  const bar = exPrefs(exById(plateExId)).bar;
+  const r = platesPerSide(weight, bar);
+  if (!r) return `<p class="muted">That's lighter than the bar (${bar} kg).</p>`;
+  const warm = warmupSets(weight, bar);
+  return `<h3>Load on each side</h3>
+    ${r.plates.length ? `<div class="barbell"><span class="sleeve"></span>${r.plates.map(p =>
+      `<span class="plate" style="background:${PLATE_STYLE[p][0]};height:${PLATE_STYLE[p][1]}px" title="${p} kg"></span>`).join('')}</div>
+      <p class="plate-text"><strong>${r.plates.map(fmtKg).join(' + ')} kg</strong> on each side</p>`
+      : `<p>${bar ? 'Just the empty bar.' : 'No plates needed.'}</p>`}
+    ${r.leftover ? `<p class="muted small">Can't make exactly ${fmtKg(weight)} kg with standard plates. This loads ${fmtKg(weight - r.leftover)} kg.</p>` : ''}
+    <h3>Warm-up sets</h3>
+    ${warm.length ? `<ul class="session-list">${warm.map(s => `<li><span><strong>${fmtKg(s.kg)} kg</strong> × ${s.reps}</span>
+      <span class="muted small">${plateText(s.kg, bar)}</span></li>`).join('')}</ul>`
+      : `<p class="muted small">This weight is light enough to skip warm-ups.</p>`}`;
+}
+
 /* ------------------------------ Rest timer ------------------------------ */
 
 const timerEl = document.getElementById('timer');
@@ -1042,8 +1171,8 @@ const actions = {
   'toggle-done'({ ei, si }) {
     const ex = currentWorkout().exercises[ei], s = ex.sets[si];
     if (s.done) { s.done = false; save(); render(); return; }
-    // Empty boxes? Use what you did last time (the grey hint).
-    const last = lastSession(ex.exId, ui.date), hint = last && last.sets[si];
+    // Empty boxes? Use the grey hint (today's suggestion).
+    const hint = setHint(suggestion(ex.exId, ui.date), Number(si));
     if (hint) {
       if (s.kg == null) s.kg = hint.kg;
       if (s.reps == null) s.reps = hint.reps;
@@ -1054,6 +1183,25 @@ const actions = {
     save(); render();
     startTimer(state.settings.restSeconds);
     if (isPR) toast('🏆 New personal record!');
+  },
+
+  'use-suggestion'({ ei }) {
+    const ex = currentWorkout().exercises[ei], sug = suggestion(ex.exId, ui.date);
+    ex.sets.forEach((s, si) => {
+      if (s.done) return;
+      const hint = setHint(sug, si);
+      if (s.kg == null) s.kg = hint.kg;
+      if (s.reps == null) s.reps = hint.reps;
+    });
+    save(); render();
+  },
+  'exercise-settings'({ id }) { openExerciseSettings(id); },
+  'open-plates'({ ei }) { openPlateCalc(ei); },
+  'plate-bar'({ bar }) {
+    const ex = state.exercises.find(e => e.id === plateExId);
+    if (ex) { ex.bar = Number(bar); save(); }
+    document.getElementById('bar-chips').innerHTML = renderBarChips();
+    document.getElementById('plate-result').innerHTML = renderPlateResult(num(modalBody.querySelector('[data-field="plate-weight"]').value));
   },
 
   'add-activity'() { openActivityPicker(); },
@@ -1121,6 +1269,7 @@ document.addEventListener('input', e => {
     case 'setting-bw': if (num(t.value) > 0) state.settings.bodyWeight = num(t.value); break;
     case 'setting-rest': if (num(t.value) > 0) state.settings.restSeconds = num(t.value); break;
     case 'ex-search': filterExercises(t.value); return;
+    case 'plate-weight': document.getElementById('plate-result').innerHTML = renderPlateResult(num(t.value)); return;
     default: return;
   }
   save();
@@ -1138,6 +1287,7 @@ document.addEventListener('submit', e => {
   e.preventDefault();
   if (e.target.id === 'activity-form') saveActivityForm(e.target);
   if (e.target.id === 'exercise-form') createExercise(e.target);
+  if (e.target.id === 'ex-settings-form') saveExerciseSettings(e.target);
 });
 
 document.addEventListener('keydown', e => {
