@@ -1069,85 +1069,201 @@ function renderPlateResult(weight) {
 
 function workoutSummary(date) {
   const w = getDay(date).workout;
-  const exercises = [];
+  const exercises = [], muscles = [];
   let prs = 0;
   for (const ex of w.exercises) {
     const sets = filledSets(ex.sets);
     if (!sets.length) continue;
+    const info = exById(ex.exId);
     const best = sets.reduce((b, s) => ((s.kg || 0) > (b.kg || 0) || ((s.kg || 0) === (b.kg || 0) && s.reps > b.reps)) ? s : b);
     const pr = prSetIndex(ex, date) >= 0;
     if (pr) prs++;
-    exercises.push({ name: exById(ex.exId).name, sets: sets.length, best, pr });
+    if (info.muscle && !muscles.includes(info.muscle)) muscles.push(info.muscle);
+    exercises.push({ name: info.name, sets: sets.length, best, pr });
   }
-  return { name: w.name || 'Workout', date, duration: w.duration, kcal: workoutCalories(w, date), ...workoutVolume(w), prs, exercises };
+  return {
+    name: w.name || 'Workout', date, duration: w.duration, kcal: workoutCalories(w, date),
+    ...workoutVolume(w), prs, exercises, muscles, streak: currentStreak(),
+  };
+}
+
+// Fun "that's like lifting…" comparison for the total weight
+const LIFT_COMPARISONS = [
+  [150000, 'blue whale', 'blue whales', '🐋'], [6000, 'elephant', 'elephants', '🐘'], [1500, 'car', 'cars', '🚗'],
+  [500, 'grand piano', 'grand pianos', '🎹'], [200, 'motorbike', 'motorbikes', '🏍️'], [100, 'panda', 'pandas', '🐼'],
+];
+function liftComparison(kg) {
+  const c = LIFT_COMPARISONS.find(([w]) => kg >= w);
+  if (!c) return '';
+  const n = kg / c[0], count = n < 10 ? Math.round(n * 10) / 10 : Math.round(n);
+  return `That's like lifting ${count} ${count === 1 ? c[1] : c[2]} ${c[3]}`;
 }
 
 function drawSummaryCard(s) {
-  const W = 1080, H = 1350, P = 80;
+  const W = 1080, H = 1920, P = 90;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   const font = (weight, size) => `${weight} ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const spacing = px => { if ('letterSpacing' in g) g.letterSpacing = `${px}px`; };
   const fit = (text, maxWidth) => {
     if (g.measureText(text).width <= maxWidth) return text;
     while (text.length > 1 && g.measureText(text + '…').width > maxWidth) text = text.slice(0, -1);
     return text + '…';
   };
-  const box = (x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); g.fill(); };
+  const wrap = (text, maxWidth, maxLines) => {
+    const lines = [];
+    let line = '';
+    for (const word of text.split(/\s+/)) {
+      const test = line ? `${line} ${word}` : word;
+      if (g.measureText(test).width <= maxWidth || !line) line = test;
+      else { lines.push(line); line = word; }
+    }
+    lines.push(line);
+    if (lines.length > maxLines) lines.splice(maxLines - 1, lines.length, lines.slice(maxLines - 1).join(' '));
+    return lines.map(l => fit(l, maxWidth));
+  };
+  const rrect = (x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); };
+  const glass = (x, y, w, h, r) => {
+    rrect(x, y, w, h, r);
+    g.fillStyle = 'rgba(255,255,255,0.06)'; g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.10)'; g.lineWidth = 2; g.stroke();
+  };
+  const blob = (x, y, r, color) => {
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, color); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, W, H);
+  };
+  const hot = (x0, x1) => {
+    const grad = g.createLinearGradient(x0, 0, x1, 0);
+    grad.addColorStop(0, '#ffb238'); grad.addColorStop(0.5, '#ff7a1a'); grad.addColorStop(1, '#ff3d77');
+    return grad;
+  };
 
-  const bg = g.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, '#232838'); bg.addColorStop(1, '#0f1115');
-  g.fillStyle = bg; g.fillRect(0, 0, W, H);
-  const glow = g.createRadialGradient(W, 0, 0, W, 0, 700);
-  glow.addColorStop(0, 'rgba(255,122,26,0.35)'); glow.addColorStop(1, 'rgba(255,122,26,0)');
-  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+  // Background: dark base, glowing colour blobs, faint diagonal lines
+  g.fillStyle = '#0b0d12'; g.fillRect(0, 0, W, H);
+  blob(W * 0.95, 120, 950, 'rgba(255,122,26,0.42)');
+  blob(-80, H * 0.62, 900, 'rgba(255,61,119,0.22)');
+  blob(W, H, 800, 'rgba(124,58,237,0.22)');
+  g.strokeStyle = 'rgba(255,255,255,0.025)'; g.lineWidth = 2;
+  for (let x = -H; x < W; x += 48) { g.beginPath(); g.moveTo(x, H); g.lineTo(x + H, 0); g.stroke(); }
 
-  g.textBaseline = 'alphabetic';
-  g.fillStyle = '#ff7a1a'; g.font = font(800, 34); g.fillText('WORKOUT COMPLETE 💪', P, 130);
-  g.fillStyle = '#ffffff'; g.font = font(800, 88); g.fillText(fit(s.name, W - 2 * P), P, 235);
-  g.fillStyle = '#8b93a7'; g.font = font(500, 38);
-  g.fillText(fmtDate(s.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), P, 295);
+  // Header: logo, brand, date
+  g.textBaseline = 'middle';
+  rrect(P, 110, 76, 76, 20); g.fillStyle = hot(P, P + 76); g.fill();
+  g.font = font(400, 42); g.textAlign = 'center'; g.fillText('🏋️', P + 38, 150);
+  g.textAlign = 'left'; g.fillStyle = '#ffffff'; g.font = font(800, 30); spacing(4);
+  g.fillText('WORKOUT TRACKER', P + 100, 150); spacing(0);
+  g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = font(600, 30);
+  g.fillText(fmtDate(s.date, { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase(), W - P, 150);
+  g.textAlign = 'left';
 
-  const stats = [
-    [s.duration ? `${s.duration}` : '—', 'minutes'],
-    [fmtNum(s.volume), 'kg lifted'],
-    [`${fmtNum(s.kcal)}`, 'kcal 🔥'],
-    [`${s.prs}`, s.prs === 1 ? 'record 🏆' : 'records 🏆'],
+  // "Workout complete" pill + workout name
+  g.font = font(800, 28); spacing(3);
+  const pill = '✓  WORKOUT COMPLETE', pw = g.measureText(pill).width + 56;
+  rrect(P, 260, pw, 64, 32); g.fillStyle = 'rgba(255,122,26,0.16)'; g.fill();
+  g.strokeStyle = 'rgba(255,122,26,0.6)'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#ffb27a'; g.fillText(pill, P + 28, 293); spacing(0);
+
+  g.textBaseline = 'alphabetic'; g.fillStyle = '#ffffff'; g.font = font(900, 112);
+  const nameLines = wrap(s.name, W - 2 * P, 2);
+  let y = 460;
+  nameLines.forEach((line, i) => g.fillText(line, P, y + i * 120));
+  y += (nameLines.length - 1) * 120;
+
+  // Hero: total kg lifted with a gradient and a fun comparison
+  y += 110;
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(700, 30); spacing(4);
+  g.fillText('TOTAL LIFTED', P, y); spacing(0);
+  y += 190;
+  const big = fmtNum(s.volume);
+  g.font = font(900, big.length > 6 ? 170 : 200);
+  const bw = g.measureText(big).width;
+  g.fillStyle = hot(P, P + bw); g.fillText(big, P, y);
+  g.fillStyle = '#ffffff'; g.font = font(800, 64); g.fillText('kg', P + bw + 20, y);
+  const comparison = liftComparison(s.volume);
+  if (comparison) { y += 66; g.fillStyle = '#ffffff'; g.font = font(600, 38); g.fillText(comparison, P, y); }
+
+  // Stat tiles
+  y += 60;
+  const tiles = [
+    ['⏱', s.duration ? `${s.duration}` : '—', 'MINUTES'],
+    ['🔥', fmtNum(s.kcal), 'KCAL'],
+    ['💪', `${s.sets}`, 'SETS'],
+    ['🏆', `${s.prs}`, s.prs === 1 ? 'RECORD' : 'RECORDS'],
   ];
-  const gap = 20, bw = (W - 2 * P - gap * 3) / 4;
-  stats.forEach(([value, label], i) => {
-    const x = P + i * (bw + gap);
-    g.fillStyle = 'rgba(255,255,255,0.07)'; box(x, 350, bw, 170, 24);
+  const gap = 20, tw = (W - 2 * P - gap * (tiles.length - 1)) / tiles.length, th = 170;
+  tiles.forEach(([icon, value, label], i) => {
+    const x = P + i * (tw + gap);
+    glass(x, y, tw, th, 28);
     g.textAlign = 'center';
-    g.fillStyle = '#ffffff'; g.font = font(800, value.length > 5 ? 46 : 58); g.fillText(value, x + bw / 2, 445);
-    g.fillStyle = '#8b93a7'; g.font = font(500, 28); g.fillText(label, x + bw / 2, 490);
+    g.fillStyle = '#ffffff'; g.font = font(400, 34); g.fillText(icon, x + tw / 2, y + 48);
+    g.font = font(800, value.length > 4 ? 48 : 58); g.fillText(value, x + tw / 2, y + 112);
+    g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(700, 22); spacing(2); g.fillText(label, x + tw / 2, y + 148); spacing(0);
     g.textAlign = 'left';
   });
+  y += th + 44;
 
-  const maxRows = 7, rows = s.exercises.slice(0, maxRows);
-  let y = 620;
-  g.fillStyle = '#8b93a7'; g.font = font(700, 28); g.fillText('EXERCISES', P, 590);
-  for (const ex of rows) {
-    const right = `${ex.sets} × ${fmtSet(ex.best)}${ex.pr ? ' 🏆' : ''}`;
-    g.font = font(600, 36);
+  // Muscle tags
+  if (s.muscles.length) {
+    g.font = font(700, 28);
+    let x = P;
+    for (const m of s.muscles) {
+      const label = `${MUSCLE_ICONS[m] || ''} ${m}`, mw = g.measureText(label).width + 44;
+      if (x + mw > W - P) break;
+      rrect(x, y, mw, 58, 29); g.fillStyle = 'rgba(255,255,255,0.08)'; g.fill();
+      g.fillStyle = '#ffffff'; g.textBaseline = 'middle'; g.fillText(label, x + 22, y + 30); g.textBaseline = 'alphabetic';
+      x += mw + 14;
+    }
+    y += 58 + 46;
+  }
+
+  // Exercise list (as many rows as fit above the footer)
+  const footerTop = H - 160, rowH = 86;
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(700, 26); spacing(4); g.fillText('EXERCISES', P, y); spacing(0);
+  y += 24;
+  let rows = Math.max(1, Math.floor((footerTop - y) / rowH));
+  if (s.exercises.length > rows) rows = Math.max(1, rows - 1);
+  for (const ex of s.exercises.slice(0, rows)) {
+    const right = ex.best.kg ? `${fmtKg(ex.best.kg)} kg × ${ex.best.reps}` : `${ex.best.reps} reps`;
+    g.font = font(800, 38);
     const rw = g.measureText(right).width;
-    g.fillStyle = ex.pr ? '#ff7a1a' : '#d6dae3'; g.textAlign = 'right'; g.fillText(right, W - P, y + 50);
-    g.fillStyle = '#ffffff'; g.textAlign = 'left'; g.font = font(600, 40); g.fillText(fit(ex.name, W - 2 * P - rw - 40), P, y + 50);
-    g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(P, y + 80, W - 2 * P, 2);
-    y += 88;
+    g.textAlign = 'right'; g.fillStyle = ex.pr ? '#ffc94a' : '#ffffff'; g.fillText(right, W - P, y + 50);
+    if (ex.pr) {
+      g.font = font(800, 20); spacing(2);
+      const bw2 = g.measureText('NEW PR').width + 28;
+      rrect(W - P - bw2, y + 64, bw2, 32, 16); g.fillStyle = hot(W - P - bw2, W - P); g.fill();
+      g.fillStyle = '#ffffff'; g.fillText('NEW PR', W - P - 14, y + 87); spacing(0);
+    }
+    g.textAlign = 'left'; g.fillStyle = '#ffffff'; g.font = font(700, 40);
+    g.fillText(fit(ex.name, W - 2 * P - rw - 40), P, y + 50);
+    for (let d = 0; d < Math.min(ex.sets, 12); d++) {
+      g.beginPath(); g.arc(P + 8 + d * 24, y + 76, 7, 0, Math.PI * 2);
+      g.fillStyle = '#ff7a1a'; g.fill();
+    }
+    g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(P, y + rowH - 2, W - 2 * P, 2);
+    y += rowH;
   }
-  if (s.exercises.length > maxRows) {
-    g.fillStyle = '#8b93a7'; g.font = font(500, 32); g.fillText(`+ ${s.exercises.length - maxRows} more`, P, y + 50);
+  if (s.exercises.length > rows) {
+    g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(600, 32);
+    g.fillText(`+ ${s.exercises.length - rows} more`, P, y + 50);
   }
 
-  g.fillStyle = '#ff7a1a'; box(P, H - 120, 56, 56, 14);
-  g.fillStyle = '#ffffff'; g.font = font(800, 30); g.textAlign = 'center'; g.fillText('🏋️', P + 28, H - 81);
-  g.textAlign = 'left'; g.fillStyle = '#8b93a7'; g.font = font(600, 30); g.fillText('Logged with Workout Tracker', P + 76, H - 81);
+  // Footer: streak + brand
+  g.textBaseline = 'middle';
+  if (s.streak >= 2) {
+    g.font = font(800, 30);
+    const label = `🔥 ${s.streak}-day streak`, sw = g.measureText(label).width + 52;
+    glass(P, H - 140, sw, 72, 36);
+    g.fillStyle = '#ffffff'; g.fillText(label, P + 26, H - 103);
+  }
+  g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.5)'; g.font = font(700, 28);
+  g.fillText('Logged with Workout Tracker', W - P, H - 103);
 
   return new Promise(resolve => c.toBlob(resolve, 'image/png'));
 }
 
-let summaryFile = null, summaryUrl = null;
+let summaryFile = null;
 
 async function openSummary() {
   const s = workoutSummary(ui.date);
@@ -1155,15 +1271,23 @@ async function openSummary() {
   const blob = await drawSummaryCard(s);
   const wrap = document.getElementById('card-wrap');
   if (!wrap || !blob) return;
-  if (summaryUrl) URL.revokeObjectURL(summaryUrl);
-  summaryUrl = URL.createObjectURL(blob);
   summaryFile = new File([blob], `workout-${ui.date}.png`, { type: 'image/png' });
-  const canShare = navigator.canShare && navigator.canShare({ files: [summaryFile] });
-  wrap.innerHTML = `<img class="summary-img" src="${summaryUrl}" alt="Workout summary card">
-    <div class="btn-row">
-      ${canShare ? `<button class="btn primary" data-action="share-card">📤 Share</button>` : ''}
-      <a class="btn${canShare ? '' : ' primary'}" href="${summaryUrl}" download="workout-${ui.date}.png">⬇️ Save image</a>
-    </div>`;
+  // A data URL (not a blob URL) so press-and-hold "Save to Photos" works on phones
+  const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  wrap.innerHTML = `<img class="summary-img" id="summary-img" src="${dataUrl}" alt="Workout summary card">
+    <div class="btn-row"><button class="btn primary" data-action="share-card">📤 Share or save to Photos</button></div>
+    <p class="muted small">In the share menu, tap <strong>Save Image</strong> to put it in your Photos, or pick WhatsApp or Instagram.
+      You can also press and hold the picture above to save it.</p>`;
+}
+
+function downloadCard() {
+  const a = document.createElement('a');
+  a.href = document.getElementById('summary-img').src;
+  a.download = summaryFile.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('Saved to Downloads. For Photos, press and hold the picture');
 }
 
 /* ------------------------------ Rest timer ------------------------------ */
@@ -1387,7 +1511,13 @@ const actions = {
   'resume-workout'() { currentWorkout().finishedAt = null; save(); render(); },
   'show-summary'() { openSummary(); },
   'share-card'() {
-    navigator.share({ files: [summaryFile], title: 'My workout' }).catch(() => { /* cancelled */ });
+    // Share only the file: adding a title/text hides "Save Image" on iPhone
+    const files = [summaryFile];
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files }))) {
+      navigator.share({ files }).catch(err => { if (err.name !== 'AbortError') downloadCard(); });
+    } else {
+      downloadCard();
+    }
   },
   'exercise-settings'({ id }) { openExerciseSettings(id); },
   'open-plates'({ ei }) { openPlateCalc(ei); },

@@ -168,7 +168,13 @@ a { color: var(--accent); }
 }
 .workout-status { font-size: 0.9rem; color: var(--muted); margin: -4px 0 12px; font-variant-numeric: tabular-nums; }
 .workout-status #workout-clock { color: var(--text); font-weight: 700; }
-.summary-img { width: 100%; border-radius: 14px; display: block; }
+.summary-img {
+  display: block; max-width: 100%; max-height: 58vh; margin: 0 auto;
+  border-radius: 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+#card-wrap .btn-row { justify-content: center; }
+#card-wrap .btn-row .btn { flex: 1; max-width: 360px; }
+#card-wrap p { text-align: center; }
 .set-row input {
   width: 100%; min-width: 0; padding: 9px 6px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
@@ -318,7 +324,8 @@ a { color: var(--accent); }
   position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top)); z-index: 60;
   transform: translate(-50%, -160%); transition: transform 0.25s ease;
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-  padding: 10px 18px; border-radius: 999px; font-weight: 600; white-space: nowrap;
+  padding: 10px 18px; border-radius: 999px; font-weight: 600;
+  width: max-content; max-width: calc(100vw - 32px); text-align: center;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
 }
 .toast.show { transform: translate(-50%, 0); }
