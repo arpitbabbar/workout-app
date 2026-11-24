@@ -149,7 +149,21 @@ function pruneDay(date) {
 
 const sortedDates = () => Object.keys(state.days).sort();
 const exById = id => state.exercises.find(e => e.id === id) || { id, name: 'Unknown exercise', muscle: '' };
-const filledSets = sets => sets.filter(s => s.reps > 0);
+// Logged sets that count for records, volume and suggestions (warm-ups don't)
+const filledSets = sets => sets.filter(s => s.reps > 0 && s.type !== 'warmup');
+const SET_TYPES = [undefined, 'warmup', 'drop', 'failure'];
+const SET_TYPE_INFO = {
+  warmup: ['W', 'Warm-up set (not counted in records)'], drop: ['D', 'Drop set'], failure: ['F', 'Set to failure'],
+};
+// Position of each set among the working (non-warm-up) sets, or -1 for warm-ups
+function workingIndexes(sets) {
+  let n = 0;
+  return sets.map(s => s.type === 'warmup' ? -1 : n++);
+}
+function fmtElapsed(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
 const activityType = a => ACTIVITY_TYPES[a.type] || ACTIVITY_TYPES.other;
 const activityName = a => (a.type === 'other' && a.label) ? a.label : activityType(a).name;
 
@@ -190,7 +204,7 @@ function prSetIndex(ex, date) {
   const prev = bestWeightBefore(ex.exId, date);
   if (prev === null) return -1;
   let idx = -1, max = prev;
-  ex.sets.forEach((s, i) => { if (s.reps > 0 && (s.kg || 0) > max) { max = s.kg; idx = i; } });
+  ex.sets.forEach((s, i) => { if (s.reps > 0 && s.type !== 'warmup' && (s.kg || 0) > max) { max = s.kg; idx = i; } });
   return idx;
 }
 
@@ -422,8 +436,9 @@ function renderWorkout(date, day) {
       <span class="emoji">💪</span>
       <input class="title-input" data-field="workout-name" value="${esc(w.name)}" placeholder="Workout name (e.g. Push day)">
     </div>
+    ${renderWorkoutStatus(w, date)}
     ${w.exercises.map((ex, ei) => renderExercise(ex, ei, date)).join('')}
-    <button class="btn primary" data-action="add-exercise">+ Add exercise</button>
+    <button class="btn${w.exercises.length ? '' : ' primary'}" data-action="add-exercise">+ Add exercise</button>
     <div class="grid-2">
       <label class="field"><span>Duration (min)</span>
         <input type="number" inputmode="numeric" min="0" data-field="workout-duration" value="${w.duration ?? ''}" placeholder="e.g. 60"></label>
@@ -431,10 +446,27 @@ function renderWorkout(date, day) {
     <label class="field"><span>Notes</span>
       <textarea rows="2" data-field="workout-notes" placeholder="How did it feel?">${esc(w.notes)}</textarea></label>
     <div class="btn-row">
+      ${w.exercises.length ? (w.finishedAt
+        ? `<button class="btn primary" data-action="show-summary">📤 Share summary</button>`
+        : `<button class="btn primary" data-action="finish-workout">✅ Finish workout</button>`) : ''}
       ${w.exercises.length ? `<button class="btn" data-action="save-template">Save as routine</button>` : ''}
       <button class="btn danger-ghost" data-action="delete-workout">Delete workout</button>
     </div>
   </section>`;
+}
+
+const MAX_CLOCK_MS = 6 * 3600 * 1000;
+
+function renderWorkoutStatus(w, date) {
+  if (w.finishedAt) {
+    return `<div class="workout-status">✅ Finished${w.duration ? ` · ${w.duration} min` : ''} ·
+      <a href="#" data-action="resume-workout">resume</a></div>`;
+  }
+  // Live clock only for a workout started today (and not left running for hours)
+  if (w.startedAt && date === todayStr() && Date.now() - w.startedAt < MAX_CLOCK_MS) {
+    return `<div class="workout-status">⏱ <span id="workout-clock" data-start="${w.startedAt}">${fmtElapsed(Date.now() - w.startedAt)}</span></div>`;
+  }
+  return '';
 }
 
 function renderExercise(ex, ei, date) {
@@ -443,23 +475,26 @@ function renderExercise(ex, ei, date) {
   const last = lastSession(ex.exId, date);
   const sug = suggestion(ex.exId, date);
   const pr = prSetIndex(ex, date);
+  const wi = workingIndexes(ex.sets);
   const rows = ex.sets.map((s, si) => {
-    const hint = setHint(sug, si);
+    const hint = wi[si] >= 0 ? setHint(sug, wi[si]) : null;
     const at = `data-ei="${ei}" data-si="${si}"`;
+    const label = si === pr ? '🏆' : s.type ? SET_TYPE_INFO[s.type][0] : wi[si] + 1;
     return `<div class="set-row${s.done ? ' done' : ''}">
-      <span class="set-no">${si === pr ? '🏆' : si + 1}</span>
+      <button class="set-no${s.type ? ` type-${s.type}` : ''}" data-action="cycle-set-type" ${at} aria-label="Change set type">${label}</button>
       <input type="number" inputmode="decimal" step="any" min="0" data-field="set-kg" ${at} value="${s.kg ?? ''}" placeholder="${hint && hint.kg ? fmtKg(hint.kg) : 'kg'}" aria-label="Weight in kg">
       <input type="number" inputmode="numeric" step="1" min="0" data-field="set-reps" ${at} value="${s.reps ?? ''}" placeholder="${hint ? hint.reps : 'reps'}" aria-label="Reps">
       <button class="check" data-action="toggle-done" ${at} aria-label="Mark set done">✓</button>
       <button class="icon-btn small" data-action="remove-set" ${at} aria-label="Remove set">✕</button>
     </div>`;
   }).join('');
-  const canFill = sug && ex.sets.some(s => !s.done && (s.kg == null || s.reps == null));
+  const canFill = sug && ex.sets.some(s => !s.done && s.type !== 'warmup' && (s.kg == null || s.reps == null));
   return `<div class="exercise">
     <div class="ex-head">
       <div>
         <div class="ex-name">${esc(info.name)}</div>
         <div class="muted small">${last ? `Last time (${shortDate(last.date)}): ${last.sets.map(fmtSet).join(', ')}` : 'First time logging this one'}</div>
+        ${info.note ? `<div class="ex-note">📝 ${esc(info.note)}</div>` : ''}
       </div>
       <div class="ex-tools">
         <button class="icon-btn small" data-action="exercise-settings" data-id="${esc(ex.exId)}" aria-label="Exercise settings">⚙️</button>
@@ -937,6 +972,7 @@ function addExerciseToWorkout(exId) {
 function newWorkout(name, exIds) {
   ensureDay(ui.date).workout = {
     name, duration: null, notes: '',
+    startedAt: ui.date === todayStr() ? Date.now() : null, finishedAt: null,
     exercises: exIds.map(exId => ({ exId, sets: makeSets(exId, ui.date) })),
   };
   save();
@@ -945,8 +981,10 @@ function newWorkout(name, exIds) {
 function openExerciseSettings(exId) {
   const p = exPrefs(exById(exId));
   openModal(`<h2>⚙️ ${esc(exById(exId).name)}</h2>
-    <p class="muted small">Used for suggestions: once you reach the top of the rep range on every set, the app tells you to add weight.</p>
     <form id="ex-settings-form" data-id="${esc(exId)}" class="grid-2">
+      <label class="field wide"><span>📝 Note: shown every time you do this exercise</span>
+        <textarea name="note" rows="2" placeholder="e.g. Seat height 4, wide grip">${esc(exById(exId).note)}</textarea></label>
+      <p class="muted small wide">Rep range for suggestions: once you reach the top of the range on every set, the app tells you to add weight.</p>
       ${formField({ key: 'repMin', label: 'Reps from', type: 'number', required: true }, p.repMin)}
       ${formField({ key: 'repMax', label: 'Reps up to', type: 'number', required: true }, p.repMax)}
       ${formField({ key: 'step', label: 'Add weight in steps of (kg)', type: 'number', required: true, wide: true }, p.step)}
@@ -959,17 +997,18 @@ function saveExerciseSettings(form) {
   const repMin = Math.round(num(fd.get('repMin'))), repMax = Math.round(num(fd.get('repMax'))), step = num(fd.get('step'));
   if (!(repMin > 0 && repMax >= repMin && step > 0)) { toast('Check the numbers: “from” must be ≤ “up to”'); return; }
   const ex = state.exercises.find(e => e.id === form.dataset.id);
-  if (ex) Object.assign(ex, { repMin, repMax, step });
+  if (ex) Object.assign(ex, { repMin, repMax, step, note: String(fd.get('note') || '').trim() });
   save(); closeModal(); render();
 }
 
-let plateExId = null;
+let plateExId = null, plateEi = null;
 
 function openPlateCalc(ei) {
   const ex = currentWorkout().exercises[ei];
   const sug = suggestion(ex.exId, ui.date);
-  const weight = Math.max(0, ...ex.sets.map(s => s.kg || 0)) || (sug && sug.kg) || '';
+  const weight = Math.max(0, ...ex.sets.filter(s => s.type !== 'warmup').map(s => s.kg || 0)) || (sug && sug.kg) || '';
   plateExId = ex.exId;
+  plateEi = Number(ei);
   openModal(`<h2>🧮 ${esc(exById(ex.exId).name)}</h2>
     <label class="field"><span>Working weight (kg)</span>
       <input type="number" inputmode="decimal" step="any" min="0" data-field="plate-weight" value="${weight}" placeholder="e.g. 80"></label>
@@ -1002,8 +1041,110 @@ function renderPlateResult(weight) {
     ${r.leftover ? `<p class="muted small">Can't make exactly ${fmtKg(weight)} kg with standard plates. This loads ${fmtKg(weight - r.leftover)} kg.</p>` : ''}
     <h3>Warm-up sets</h3>
     ${warm.length ? `<ul class="session-list">${warm.map(s => `<li><span><strong>${fmtKg(s.kg)} kg</strong> × ${s.reps}</span>
-      <span class="muted small">${plateText(s.kg, bar)}</span></li>`).join('')}</ul>`
+      <span class="muted small">${plateText(s.kg, bar)}</span></li>`).join('')}</ul>
+      <div class="btn-row"><button class="btn primary" data-action="add-warmups">Add these warm-ups to my workout</button></div>`
       : `<p class="muted small">This weight is light enough to skip warm-ups.</p>`}`;
+}
+
+/* ------------------------------ Summary card ------------------------------ */
+
+function workoutSummary(date) {
+  const w = getDay(date).workout;
+  const exercises = [];
+  let prs = 0;
+  for (const ex of w.exercises) {
+    const sets = filledSets(ex.sets);
+    if (!sets.length) continue;
+    const best = sets.reduce((b, s) => ((s.kg || 0) > (b.kg || 0) || ((s.kg || 0) === (b.kg || 0) && s.reps > b.reps)) ? s : b);
+    const pr = prSetIndex(ex, date) >= 0;
+    if (pr) prs++;
+    exercises.push({ name: exById(ex.exId).name, sets: sets.length, best, pr });
+  }
+  return { name: w.name || 'Workout', date, duration: w.duration, ...workoutVolume(w), prs, exercises };
+}
+
+function drawSummaryCard(s) {
+  const W = 1080, H = 1350, P = 80;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const font = (weight, size) => `${weight} ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const fit = (text, maxWidth) => {
+    if (g.measureText(text).width <= maxWidth) return text;
+    while (text.length > 1 && g.measureText(text + '…').width > maxWidth) text = text.slice(0, -1);
+    return text + '…';
+  };
+  const box = (x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); g.fill(); };
+
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#232838'); bg.addColorStop(1, '#0f1115');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W, 0, 0, W, 0, 700);
+  glow.addColorStop(0, 'rgba(255,122,26,0.35)'); glow.addColorStop(1, 'rgba(255,122,26,0)');
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+
+  g.textBaseline = 'alphabetic';
+  g.fillStyle = '#ff7a1a'; g.font = font(800, 34); g.fillText('WORKOUT COMPLETE 💪', P, 130);
+  g.fillStyle = '#ffffff'; g.font = font(800, 88); g.fillText(fit(s.name, W - 2 * P), P, 235);
+  g.fillStyle = '#8b93a7'; g.font = font(500, 38);
+  g.fillText(fmtDate(s.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), P, 295);
+
+  const stats = [
+    [s.duration ? `${s.duration}` : '—', 'minutes'],
+    [fmtNum(s.volume), 'kg lifted'],
+    [`${s.sets}`, 'sets'],
+    [`${s.prs}`, s.prs === 1 ? 'record 🏆' : 'records 🏆'],
+  ];
+  const gap = 20, bw = (W - 2 * P - gap * 3) / 4;
+  stats.forEach(([value, label], i) => {
+    const x = P + i * (bw + gap);
+    g.fillStyle = 'rgba(255,255,255,0.07)'; box(x, 350, bw, 170, 24);
+    g.textAlign = 'center';
+    g.fillStyle = '#ffffff'; g.font = font(800, value.length > 5 ? 46 : 58); g.fillText(value, x + bw / 2, 445);
+    g.fillStyle = '#8b93a7'; g.font = font(500, 28); g.fillText(label, x + bw / 2, 490);
+    g.textAlign = 'left';
+  });
+
+  const maxRows = 7, rows = s.exercises.slice(0, maxRows);
+  let y = 620;
+  g.fillStyle = '#8b93a7'; g.font = font(700, 28); g.fillText('EXERCISES', P, 590);
+  for (const ex of rows) {
+    const right = `${ex.sets} × ${fmtSet(ex.best)}${ex.pr ? ' 🏆' : ''}`;
+    g.font = font(600, 36);
+    const rw = g.measureText(right).width;
+    g.fillStyle = ex.pr ? '#ff7a1a' : '#d6dae3'; g.textAlign = 'right'; g.fillText(right, W - P, y + 50);
+    g.fillStyle = '#ffffff'; g.textAlign = 'left'; g.font = font(600, 40); g.fillText(fit(ex.name, W - 2 * P - rw - 40), P, y + 50);
+    g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(P, y + 80, W - 2 * P, 2);
+    y += 88;
+  }
+  if (s.exercises.length > maxRows) {
+    g.fillStyle = '#8b93a7'; g.font = font(500, 32); g.fillText(`+ ${s.exercises.length - maxRows} more`, P, y + 50);
+  }
+
+  g.fillStyle = '#ff7a1a'; box(P, H - 120, 56, 56, 14);
+  g.fillStyle = '#ffffff'; g.font = font(800, 30); g.textAlign = 'center'; g.fillText('🏋️', P + 28, H - 81);
+  g.textAlign = 'left'; g.fillStyle = '#8b93a7'; g.font = font(600, 30); g.fillText('Logged with Workout Tracker', P + 76, H - 81);
+
+  return new Promise(resolve => c.toBlob(resolve, 'image/png'));
+}
+
+let summaryFile = null, summaryUrl = null;
+
+async function openSummary() {
+  const s = workoutSummary(ui.date);
+  openModal(`<h2>🎉 Great workout!</h2><div id="card-wrap"><p class="muted">Creating your summary card…</p></div>`);
+  const blob = await drawSummaryCard(s);
+  const wrap = document.getElementById('card-wrap');
+  if (!wrap || !blob) return;
+  if (summaryUrl) URL.revokeObjectURL(summaryUrl);
+  summaryUrl = URL.createObjectURL(blob);
+  summaryFile = new File([blob], `workout-${ui.date}.png`, { type: 'image/png' });
+  const canShare = navigator.canShare && navigator.canShare({ files: [summaryFile] });
+  wrap.innerHTML = `<img class="summary-img" src="${summaryUrl}" alt="Workout summary card">
+    <div class="btn-row">
+      ${canShare ? `<button class="btn primary" data-action="share-card">📤 Share</button>` : ''}
+      <a class="btn${canShare ? '' : ' primary'}" href="${summaryUrl}" download="workout-${ui.date}.png">⬇️ Save image</a>
+    </div>`;
 }
 
 /* ------------------------------ Rest timer ------------------------------ */
@@ -1172,7 +1313,8 @@ const actions = {
     const ex = currentWorkout().exercises[ei], s = ex.sets[si];
     if (s.done) { s.done = false; save(); render(); return; }
     // Empty boxes? Use the grey hint (today's suggestion).
-    const hint = setHint(suggestion(ex.exId, ui.date), Number(si));
+    const work = workingIndexes(ex.sets)[si];
+    const hint = work >= 0 ? setHint(suggestion(ex.exId, ui.date), work) : null;
     if (hint) {
       if (s.kg == null) s.kg = hint.kg;
       if (s.reps == null) s.reps = hint.reps;
@@ -1187,13 +1329,46 @@ const actions = {
 
   'use-suggestion'({ ei }) {
     const ex = currentWorkout().exercises[ei], sug = suggestion(ex.exId, ui.date);
+    const wi = workingIndexes(ex.sets);
     ex.sets.forEach((s, si) => {
-      if (s.done) return;
-      const hint = setHint(sug, si);
+      if (s.done || wi[si] < 0) return;
+      const hint = setHint(sug, wi[si]);
       if (s.kg == null) s.kg = hint.kg;
       if (s.reps == null) s.reps = hint.reps;
     });
     save(); render();
+  },
+  'cycle-set-type'({ ei, si }) {
+    const s = currentWorkout().exercises[ei].sets[si];
+    s.type = SET_TYPES[(SET_TYPES.indexOf(s.type) + 1) % SET_TYPES.length];
+    if (!s.type) delete s.type;
+    save(); render();
+    toast(s.type ? SET_TYPE_INFO[s.type][1] : 'Normal set');
+  },
+  'add-warmups'() {
+    const ex = currentWorkout().exercises[plateEi];
+    const weight = num(modalBody.querySelector('[data-field="plate-weight"]').value);
+    const warm = warmupSets(weight, exPrefs(exById(ex.exId)).bar);
+    ex.sets = [
+      ...warm.map(s => ({ kg: s.kg, reps: s.reps, done: false, type: 'warmup' })),
+      ...ex.sets.filter(s => s.type !== 'warmup' || s.done),
+    ];
+    save(); closeModal(); render();
+    toast(`Added ${warm.length} warm-up sets`);
+  },
+  'finish-workout'() {
+    const w = currentWorkout();
+    if (!w.exercises.some(e => filledSets(e.sets).length)) { toast('Log at least one set first'); return; }
+    w.finishedAt = Date.now();
+    if (w.duration == null && w.startedAt && w.finishedAt - w.startedAt < MAX_CLOCK_MS) {
+      w.duration = Math.max(1, Math.round((w.finishedAt - w.startedAt) / 60000));
+    }
+    stopTimer(); save(); render(); openSummary();
+  },
+  'resume-workout'() { currentWorkout().finishedAt = null; save(); render(); },
+  'show-summary'() { openSummary(); },
+  'share-card'() {
+    navigator.share({ files: [summaryFile], title: 'My workout' }).catch(() => { /* cancelled */ });
   },
   'exercise-settings'({ id }) { openExerciseSettings(id); },
   'open-plates'({ ei }) { openPlateCalc(ei); },
@@ -1297,6 +1472,12 @@ document.addEventListener('keydown', e => {
 /* ------------------------------ Start ------------------------------ */
 
 render();
+
+// Tick the live workout clock
+setInterval(() => {
+  const el = document.getElementById('workout-clock');
+  if (el) el.textContent = fmtElapsed(Date.now() - Number(el.dataset.start));
+}, 1000);
 
 // Ask the browser not to clear our data when storage is low
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});

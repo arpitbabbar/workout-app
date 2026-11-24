@@ -155,7 +155,20 @@ a { color: var(--accent); }
   gap: 6px; align-items: center; margin-bottom: 6px;
 }
 .set-head { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; text-align: center; margin-bottom: 4px; }
-.set-no { text-align: center; font-weight: 700; color: var(--muted); }
+.set-no {
+  height: 38px; border: none; border-radius: 10px; background: transparent; padding: 0;
+  font: inherit; font-weight: 700; color: var(--muted); cursor: pointer;
+}
+.set-no.type-warmup { color: #eab308; background: rgba(234, 179, 8, 0.14); }
+.set-no.type-drop { color: var(--blue); background: rgba(59, 130, 246, 0.14); }
+.set-no.type-failure { color: var(--danger); background: rgba(239, 68, 68, 0.14); }
+.ex-note {
+  margin-top: 6px; font-size: 0.85rem; padding: 4px 8px; border-radius: 8px;
+  background: rgba(234, 179, 8, 0.12); display: inline-block;
+}
+.workout-status { font-size: 0.9rem; color: var(--muted); margin: -4px 0 12px; font-variant-numeric: tabular-nums; }
+.workout-status #workout-clock { color: var(--text); font-weight: 700; }
+.summary-img { width: 100%; border-radius: 14px; display: block; }
 .set-row input {
   width: 100%; min-width: 0; padding: 9px 6px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
